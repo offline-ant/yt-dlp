@@ -457,3 +457,55 @@ class RedditIE(InfoExtractor):
             '_type': 'url_transparent',
             'url': video_url,
         }
+
+
+class RedditVideoIE(InfoExtractor):
+    _VALID_URL = r'https?://v\.redd\.it/(?P<id>[\da-zA-Z]+)/?(?:[?#]|$)'
+    _TESTS = [{
+        'url': 'https://v.redd.it/ibg2qyb77gzh1',
+        'info_dict': {
+            'id': 'ibg2qyb77gzh1',
+            'ext': 'mp4',
+            'title': str,
+        },
+        'params': {'skip_download': True},
+    }, {
+        'url': 'https://v.redd.it/ibg2qyb77gzh1/?share_id=example',
+        'only_matching': True,
+    }]
+
+    def _real_extract(self, url):
+        video_id = self._match_id(url)
+
+        try:
+            response = self._request_webpage(url, video_id, note='Resolving Reddit post')
+            post_url = response.url
+            response.close()
+            if RedditIE.suitable(post_url):
+                assert self._downloader is not None
+                return self._downloader.get_info_extractor(RedditIE.ie_key()).extract(post_url)
+        except ExtractorError as e:
+            self.write_debug(f'Unable to extract Reddit post details: {e}')
+
+        # The media CDN can remain accessible even when the post API is blocked.
+        formats, subtitles = self._extract_m3u8_formats_and_subtitles(
+            f'https://v.redd.it/{video_id}/HLSPlaylist.m3u8?f=hd,subsAll',
+            video_id, 'mp4', m3u8_id='hls', fatal=False)
+        dash_formats, dash_subtitles = self._extract_mpd_formats_and_subtitles(
+            f'https://v.redd.it/{video_id}/DASHPlaylist.mpd', video_id, mpd_id='dash', fatal=False)
+        formats.extend(dash_formats)
+        self._merge_subtitles(dash_subtitles, target=subtitles)
+
+        if formats:
+            self.report_warning('Reddit post details are unavailable; downloading video directly')
+        else:
+            self.raise_no_formats(
+                'Unable to download Reddit video manifests; post details are also unavailable',
+                expected=True, video_id=video_id)
+
+        return {
+            'id': video_id,
+            'title': video_id,
+            'formats': formats,
+            'subtitles': subtitles,
+        }
